@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.manifest
+*.spec
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# IDEs
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Output directories (generated at runtime — do not commit)
+output/
+output_v2/
+output_v3/
+output_*/
+
+# Model weights & cache (large files — use DVC or download at runtime)
+*.pth
+*.ckpt
+*.pt
+*.h5
+*.pkl
+.cache/
+
+# Dataset directories (too large for git — document download instructions)
+data/
+datasets/
+
+# Report/tmp
+Report/
+
+# Logs
+*.log
+logs/
+
+# PyTorch Hub cache (downloaded automatically)
+# Users should let torch.hub download to their local cache
+# C:/Users/<user>/.cache/torch/hub/
+
+# Mediapipe model files
+*.tflite
+*.task
