@@ -50,16 +50,64 @@ def pearson_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return 1.0 - r
 
 
+def pairwise_ranking_loss(pred: torch.Tensor,
+                          target: torch.Tensor,
+                          margin: float = 0.5) -> torch.Tensor:
+    """
+    Margin Ranking Loss on randomly sampled pairs within a batch.
+
+    For each pair (i, j) where target[i] > target[j] + margin,
+    the model is penalised if it predicts pred[i] <= pred[j].
+
+    This directly optimises the ranking capability of the model —
+    matching how humans perceive attractiveness comparatively, not absolutely.
+
+    margin: minimum score difference to form a valid (hard) pair.
+            Pairs where |target_i - target_j| < margin are skipped.
+    """
+    pred   = pred.squeeze()
+    target = target.squeeze()
+    B = pred.shape[0]
+    if B < 2:
+        return torch.tensor(0.0, device=pred.device)
+
+    # Sample all pairs; filter by margin
+    idx_i = torch.arange(B, device=pred.device).unsqueeze(1).expand(B, B).reshape(-1)
+    idx_j = torch.arange(B, device=pred.device).unsqueeze(0).expand(B, B).reshape(-1)
+
+    diff_target = target[idx_i] - target[idx_j]
+    valid = diff_target > margin     # target_i is strictly better than target_j
+
+    if valid.sum() == 0:
+        return torch.tensor(0.0, device=pred.device)
+
+    pred_i  = pred[idx_i[valid]]
+    pred_j  = pred[idx_j[valid]]
+    # We want pred_i > pred_j; MarginRankingLoss penalises when it's not
+    y_sign  = torch.ones_like(pred_i)   # +1 means first arg should be larger
+    return nn.functional.margin_ranking_loss(pred_i, pred_j, y_sign, margin=0.0)
+
+
 def combined_loss(pred: torch.Tensor,
                   target: torch.Tensor,
-                  alpha: float = 0.6) -> torch.Tensor:
+                  alpha: float = 0.5,
+                  beta: float  = 0.2) -> torch.Tensor:
     """
-    alpha * MSE + (1-alpha) * Pearson-loss.
-    alpha=0.6 balances absolute accuracy and ranking correlation.
+    alpha * MSE + (1-alpha-beta) * Pearson-loss + beta * Pairwise-Ranking-loss.
+
+    Default weights:
+        alpha = 0.50  → MSE     (absolute accuracy)
+        beta  = 0.20  → Ranking (pairwise ordering)
+        rest  = 0.30  → Pearson (correlation quality)
+
+    Pearson and Ranking together make the model optimise *how well it orders*
+    faces relative to each other, not just minimise absolute number errors.
     """
-    mse  = nn.functional.mse_loss(pred, target)
-    ploss = pearson_loss(pred.squeeze(), target.squeeze())
-    return alpha * mse + (1.0 - alpha) * ploss
+    mse   = nn.functional.mse_loss(pred, target)
+    p_l   = pearson_loss(pred.squeeze(), target.squeeze())
+    rank_l = pairwise_ranking_loss(pred, target)
+    gamma = max(0.0, 1.0 - alpha - beta)
+    return alpha * mse + gamma * p_l + beta * rank_l
 
 
 # ─── Model ────────────────────────────────────────────────────────────────────
@@ -122,8 +170,10 @@ def main():
     parser.add_argument("--epochs",     type=int,   default=150)
     parser.add_argument("--lr",         type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int,   default=64)
-    parser.add_argument("--alpha",      type=float, default=0.6,
-                        help="MSE weight in combined loss (0=pure Pearson, 1=pure MSE)")
+    parser.add_argument("--alpha",      type=float, default=0.5,
+                        help="MSE weight (0-1). Remaining split between Pearson and Ranking.")
+    parser.add_argument("--beta",       type=float, default=0.2,
+                        help="Pairwise ranking loss weight.")
     parser.add_argument("--out_dir",    default="weights")
     args = parser.parse_args()
 
@@ -211,7 +261,7 @@ def main():
             bX, by = bX.to(device), by.to(device)
             optimiser.zero_grad()
             pred = model(bX)
-            loss = combined_loss(pred, by, alpha=args.alpha)
+            loss = combined_loss(pred, by, alpha=args.alpha, beta=args.beta)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimiser.step()

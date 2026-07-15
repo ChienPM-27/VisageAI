@@ -103,22 +103,11 @@ def dino_batch_infer(dino_ext: DINOv2Extractor,
                      images_bgr: list,
                      pool: str) -> list[np.ndarray]:
     """
-    Runs DINOv2 on a batch of BGR images and returns a list of embedding vectors.
-    For pool='both', returns concatenated [CLS ; mean-pool] = 768-d vectors.
+    True GPU batch inference via DINOv2Extractor.extract_batch().
+    All images are preprocessed, stacked into a single (B,3,224,224) tensor,
+    and run through the model in one forward pass.
     """
-    embeddings = []
-    for img in images_bgr:
-        res = dino_ext.extract_features(img, pool_strategy=pool)
-        if pool == "both":
-            cls_emb  = res["cls_token"]["embedding"]
-            mean_emb = res["mean_pool"]["embedding"]
-            emb = np.concatenate([cls_emb, mean_emb])
-        elif pool == "cls":
-            emb = res["cls_token"]["embedding"]
-        else:
-            emb = res["mean_pool"]["embedding"]
-        embeddings.append(emb)
-    return embeddings
+    return dino_ext.extract_batch(images_bgr, pool_strategy=pool)
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
