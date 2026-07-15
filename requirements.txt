@@ -5,3 +5,7 @@ opencv-python
 torch
 torchvision
 pillow
+scikit-learn
+scipy
+tqdm
+pandas
