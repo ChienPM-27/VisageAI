@@ -9,7 +9,7 @@ from features.landmarks import FaceMeshExtractor
 from features.geometry import compute_all_metrics
 from features.quality import assess_quality
 from features.fusion import geometry_to_vector, fuse_features
-from features.scoring import GeometricScorer
+from features.scoring import GeometricScorer, MLScorer, AnchorScorer
 from models.backbone import DINOv2Extractor
 from utils.visualization import draw_aesthetic_metrics
 
@@ -140,9 +140,11 @@ def main():
         dino_result = {"status": "skipped"}
 
     # ── 6. Feature Fusion ─────────────────────────────────────────────────────
+    raw_fused_vector = None   # numpy array — kept for ML inference
     if metrics and embedding_for_fusion is not None:
         geo_vec, geo_names = geometry_to_vector(metrics)
         fused = fuse_features(geo_vec, embedding_for_fusion)
+        raw_fused_vector = fused["vector"]
         fusion_result = {
             "total_dims":  fused["total_dims"],
             "geo_dims":    fused["geo_dims"],
@@ -155,6 +157,29 @@ def main():
         fusion_result = {"status": "skipped — geometry invalid"}
     else:
         fusion_result = {"status": "skipped — DINOv2 not run"}
+
+    # ── 6.5  ML Scoring (requires trained model + DINOv2) ─────────────────────
+    if raw_fused_vector is not None:
+        # ML Score — primary scorer once model is trained
+        try:
+            ml_scorer = MLScorer()
+            overall_scores["ml"] = ml_scorer.score(raw_fused_vector)
+            print(f"  -> ML Score:     {overall_scores['ml']['score_out_of_10']}/10.0  "
+                  f"(Pearson r={overall_scores['ml']['model_metrics'].get('test_pearson', '?')}  "
+                  f"on SCUT test set)")
+        except FileNotFoundError:
+            print("  -> ML model not found — using Geometric score only.")
+            print("     Run: python src/scripts/extract_features.py")
+            print("          python src/training/train_mlp.py")
+
+        # Anchor Score — tier interpretation
+        try:
+            anc_scorer = AnchorScorer()
+            overall_scores["anchor"] = anc_scorer.score(raw_fused_vector)
+            print(f"  -> Anchor Score: {overall_scores['anchor']['score_out_of_10']}/10.0  "
+                  f"(closest tier: {overall_scores['anchor']['closest_tier']})")
+        except FileNotFoundError:
+            pass   # silent — anchors are optional
 
     # ── 7. Visualise ──────────────────────────────────────────────────────────
     print("Generating visual annotations…")
@@ -170,7 +195,7 @@ def main():
     cv2.imwrite(annotated_path, annotated)
 
     report = {
-        "pipeline_version": "v0.4",
+        "pipeline_version": "v0.5",
         "input_image":      args.image,
         "face_quality":     quality,
         "overall_scores":   build_json_safe(overall_scores),

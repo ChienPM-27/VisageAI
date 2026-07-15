@@ -25,6 +25,7 @@ Usage:
 import argparse
 import os
 import csv
+import json
 import pickle
 import numpy as np
 import torch
@@ -35,6 +36,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error
 from scipy.stats import pearsonr
+
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from models.face_rater import FaceRatingMLP   # shared architecture
 
 
 # ─── Loss ─────────────────────────────────────────────────────────────────────
@@ -110,45 +115,6 @@ def combined_loss(pred: torch.Tensor,
     return alpha * mse + gamma * p_l + beta * rank_l
 
 
-# ─── Model ────────────────────────────────────────────────────────────────────
-
-class FaceRatingMLP(nn.Module):
-    """
-    4-layer MLP with LayerNorm + GELU + Dropout.
-
-    Architecture (input_dim -> 512 -> 256 -> 64 -> 1):
-    - LayerNorm: stable normalisation per-sample (no batch-size dependency)
-    - GELU: smooth gradient flow, better than ReLU for regression
-    - Dropout: regularisation (0.35 on first layer, 0.20 on second)
-    - Final linear: no activation — free to predict any real value
-    """
-
-    def __init__(self, input_dim: int = 427):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 512),
-            nn.LayerNorm(512),
-            nn.GELU(),
-            nn.Dropout(0.35),
-
-            nn.Linear(512, 256),
-            nn.LayerNorm(256),
-            nn.GELU(),
-            nn.Dropout(0.20),
-
-            nn.Linear(256, 64),
-            nn.GELU(),
-
-            nn.Linear(64, 1),
-        )
-        # Initialise last layer near zero to avoid large initial predictions
-        nn.init.xavier_uniform_(self.net[-1].weight, gain=0.1)
-        nn.init.zeros_(self.net[-1].bias)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
-
-
 # ─── Metrics helper ───────────────────────────────────────────────────────────
 
 def evaluate(model, X_t, y_t, device, criterion):
@@ -192,18 +158,34 @@ def main():
     y = ((y - 1.0) / 4.0) * 10.0
     print(f"  X: {X.shape} | y: [{y.min():.2f}, {y.max():.2f}]  mean={y.mean():.2f}")
 
-    # ── 3-way stratified split (70 / 15 / 15) ───────────────────────────────
-    # Stratify by quantile bins to preserve score distribution in each split
-    bins = np.digitize(y, np.percentile(y, [20, 40, 60, 80]))
-    X_tv, X_test, y_tv, y_test = train_test_split(
-        X, y, test_size=0.15, stratify=bins, random_state=42
+    # ── 3-way stratified split (70 / 15 / 15) ──────────────────────
+    # Track INDICES explicitly so train_anchors.py can use the same split
+    all_idx  = np.arange(len(X))
+    bins_all = np.digitize(y, np.percentile(y, [20, 40, 60, 80]))
+    idx_tv, idx_test = train_test_split(
+        all_idx, test_size=0.15, stratify=bins_all, random_state=42
     )
-    bins_tv = np.digitize(y_tv, np.percentile(y_tv, [20, 40, 60, 80]))
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_tv, y_tv, test_size=0.1765,  # 0.1765 * 0.85 ≈ 0.15 of total
+    bins_tv = np.digitize(y[idx_tv], np.percentile(y[idx_tv], [20, 40, 60, 80]))
+    idx_train, idx_val = train_test_split(
+        idx_tv, test_size=0.1765,
         stratify=bins_tv, random_state=42
     )
+
+    X_train, y_train = X[idx_train], y[idx_train]
+    X_val,   y_val   = X[idx_val],   y[idx_val]
+    X_test,  y_test  = X[idx_test],  y[idx_test]
     print(f"  Train: {len(X_train)} | Val: {len(X_val)} | Test: {len(X_test)}")
+
+    # Save split indices for train_anchors.py (prevent test leakage in anchors)
+    os.makedirs(args.out_dir, exist_ok=True)
+    split_path = os.path.join(args.out_dir, "split_indices.json")
+    with open(split_path, "w") as f:
+        json.dump({
+            "train": idx_train.tolist(),
+            "val":   idx_val.tolist(),
+            "test":  idx_test.tolist(),
+        }, f)
+    print(f"  Split indices saved: {split_path}")
 
     # ── Feature standardisation ──────────────────────────────────────────────
     scaler = StandardScaler()
