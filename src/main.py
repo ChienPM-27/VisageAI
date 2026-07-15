@@ -9,6 +9,7 @@ from features.landmarks import FaceMeshExtractor
 from features.geometry import compute_all_metrics
 from features.quality import assess_quality
 from features.fusion import geometry_to_vector, fuse_features
+from features.scoring import GeometricScorer
 from models.backbone import DINOv2Extractor
 from utils.visualization import draw_aesthetic_metrics
 
@@ -97,13 +98,19 @@ def main():
     if not quality["geometry_valid"]:
         print("  → Geometry metrics will be skipped (pose/blur out of range).")
 
-    # ── 4. Compute Geometric Metrics ──────────────────────────────────────────
+    # ── 4. Compute Geometric Metrics & Scores ─────────────────────────────────
     metrics = {}
+    overall_scores = {}
     if quality["geometry_valid"]:
         print("Computing geometric metrics…")
         metrics = compute_all_metrics(landmarks_pixel)
+        
+        print("Computing Geometric Score (rule-based)…")
+        scorer = GeometricScorer()
+        overall_scores["geometric"] = scorer.score(metrics)
+        print(f"  -> Geometric Score: {overall_scores['geometric']['score_out_of_10']}/10.0")
     else:
-        print("Geometry skipped due to quality gate.")
+        print("Geometry and scoring skipped due to quality gate.")
 
     # ── 5. DINOv2 Embedding ───────────────────────────────────────────────────
     dino_result = {}
@@ -151,7 +158,7 @@ def main():
 
     # ── 7. Visualise ──────────────────────────────────────────────────────────
     print("Generating visual annotations…")
-    annotated = draw_aesthetic_metrics(aligned_image, landmarks_pixel, metrics, quality)
+    annotated = draw_aesthetic_metrics(aligned_image, landmarks_pixel, metrics, quality, overall_scores)
 
     # ── 8. Save outputs ───────────────────────────────────────────────────────
     stem = os.path.splitext(os.path.basename(args.image))[0]
@@ -163,9 +170,10 @@ def main():
     cv2.imwrite(annotated_path, annotated)
 
     report = {
-        "pipeline_version": "v0.3",
+        "pipeline_version": "v0.4",
         "input_image":      args.image,
         "face_quality":     quality,
+        "overall_scores":   build_json_safe(overall_scores),
         "geometric_metrics": build_json_safe(metrics),
         "dinov2_features":  build_json_safe(dino_result),
         "fused_feature":    build_json_safe(fusion_result),
@@ -179,7 +187,7 @@ def main():
         json.dump(report, f, indent=4, ensure_ascii=False)
 
     print("\n" + "=" * 50)
-    print("Pipeline v0.2 completed successfully!")
+    print("Pipeline v0.4 completed successfully!")
     print(f"  Aligned     -> {aligned_path}")
     print(f"  Annotated   -> {annotated_path}")
     print(f"  Report JSON -> {report_path}")

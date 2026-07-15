@@ -160,7 +160,39 @@ def draw_key_landmarks(image, landmarks_pixel):
         cv2.circle(image, tuple(pt), 2, C_GOLD, -1)
 
 
-def draw_aesthetic_metrics(image, landmarks_pixel, metrics, quality=None):
+def draw_overall_score(image, scores):
+    """Draws the overall score prominently on the HUD."""
+    if not scores or "geometric" not in scores:
+        return
+    
+    geo_score = scores["geometric"].get("score_out_of_10", 0.0)
+    text = f"GEOMETRIC SCORE: {geo_score:.1f}/10.0"
+    
+    # Draw large banner at top right
+    h, w = image.shape[:2]
+    font_scale = 0.8
+    thickness = 2
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    (tw, th), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+    
+    x = w - tw - 20
+    y = 40
+    
+    # Background box
+    cv2.rectangle(image, (x - 10, y - th - 10), (x + tw + 10, y + baseline + 10), (20, 20, 20), -1)
+    
+    # Text Color based on score
+    if geo_score >= 8.5:
+        color = (80, 255, 80) # bright green
+    elif geo_score >= 6.5:
+        color = (255, 200, 50) # gold
+    else:
+        color = (50, 50, 255) # red
+        
+    cv2.putText(image, text, (x, y), font, font_scale, color, thickness, cv2.LINE_AA)
+
+
+def draw_aesthetic_metrics(image, landmarks_pixel, metrics, quality=None, overall_scores=None):
     """
     Master function: annotates the face image with all geometric measurements,
     quality warnings, and a HUD panel.
@@ -212,5 +244,9 @@ def draw_aesthetic_metrics(image, landmarks_pixel, metrics, quality=None):
 
     # 10. Key landmark dots
     draw_key_landmarks(annotated, landmarks_pixel)
+
+    # 11. Overall Score
+    if overall_scores:
+        draw_overall_score(annotated, overall_scores)
 
     return annotated
